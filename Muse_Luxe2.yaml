@@ -23,6 +23,9 @@ esp32:
       CONFIG_ESP_WIFI_IRAM_OPT: "y"  # Unnecessary on an ESP32-S3; uses more internal memory
       CONFIG_ESP_WIFI_EXTRA_IRAM_OPT: "y"  # Unnecessary on an ESP32-S3; uses more internal memory
       CONFIG_LWIP_IRAM_OPTIMIZATION: "y"  # Unnecessary on an ESP32-S3; uses more internal memory
+    advanced:
+      minimum_chip_revision: "3.1"
+      sram1_as_iram: True
 
 logger:
   level: warn
