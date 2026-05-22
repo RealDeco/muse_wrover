@@ -1,4 +1,7 @@
-# Firmware for Muse Luxe, and Muse Proto and ESP32-WROVER Board
+# Sendspin Firmware for Muse Luxe, Muse Proto and ESP32-WROVER
+
+Open-standard protocol for synchronized audio playback and media orchestration across multiple clients and smart home devices, functioning as an open alternative to proprietary ecosystems like AirPlay or Sonos.
+
 <img width="1916" height="613" alt="15b462db-294b-4376-9991-0213d637deeb" src="https://github.com/user-attachments/assets/409514a5-06fa-468b-a918-39f7255ca898" />
 
 ---
