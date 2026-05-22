@@ -39,4 +39,7 @@ connected to a MAX98357 speaker amplifier like this:
 - Triple-clicking goes to the previous song.
 - LED is blinking blue while playing and OFF while in standby.
 
+[Flash WRover Dev Module Firmware](https://realdeco.github.io/muse_wrover/WRover/)
+
+
 ---
