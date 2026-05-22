@@ -138,6 +138,7 @@ media_source:
     id: http_media_source
   - platform: sendspin
     id: sendspin_media_source
+    decode_memory: internal
 
 media_player:
   - platform: sendspin
