@@ -108,7 +108,7 @@ speaker:
     id: mixing_speaker
     output_speaker: box_speaker
     num_channels: 2
-    task_stack_in_psram: true
+    task_stack_in_psram: false
     source_speakers:
       - id: announcement_mixing_input
       - id: media_mixing_input
