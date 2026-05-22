@@ -1,4 +1,5 @@
-# Firmware for ESP32-WROVER, Muse Luxe, and Muse Proto
+# Firmware for Muse Luxe, and Muse Proto and ESP32-WROVER Board
+<img width="1916" height="613" alt="15b462db-294b-4376-9991-0213d637deeb" src="https://github.com/user-attachments/assets/409514a5-06fa-468b-a918-39f7255ca898" />
 
 ---
 
