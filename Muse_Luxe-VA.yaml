@@ -246,11 +246,11 @@ micro_wake_word:
   stop_after_detection: false  # Keep listening during replies so "stop" can be heard
   models:
     - okay_nabu
-    - hey_jarvis
     # Only enabled while a TTS reply plays or a timer rings
     - model: https://github.com/kahrendt/microWakeWord/releases/download/stop/stop.json
       id: stop
       internal: true
+#    - hey_jarvis
 #    - alexa
 #    - hey_mycroft
 #    - model: https://raw.githubusercontent.com/RealDeco/xiaozhi-esphome/refs/heads/main/MicroWakeWords/models/v2/hey_sarah.json
