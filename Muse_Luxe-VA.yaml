@@ -1,18 +1,30 @@
-substitutions:
-  startup_sound_file: Home_Connected
+packages:
+  extcomp:
+    url: https://github.com/RealDeco/xiaozhi-esphome.git
+    ref: main
+    refresh: 0s
+    files:
+      - devices/Under_Development/Modular/HW/sendspin-external_components_2026.10.0.yaml
 
 esphome:
   name: muse-luxe
   friendly_name: Muse Luxe
-  min_version: 2026.6.0
+  min_version: 2026.10.0
   name_add_mac_suffix: true
   project:
     name: realdeco.muse_wrover
-    version: "2026.6.0"
+    version: "2026.10.0"
   on_boot:
     priority: -100
     then:
+      - micro_wake_word.disable_model: stop  # Enabled state is saved; never boot with it on
       - script.execute: led_red
+      # Amp stays off until the codec is set up, otherwise it plays loud noise at boot
+      - delay: 500ms
+      - globals.set:
+          id: amp_ready
+          value: "true"
+      - script.execute: apply_amp
 
 esp32:
   variant: esp32
@@ -25,19 +37,19 @@ esp32:
       CONFIG_LWIP_IRAM_OPTIMIZATION: "y"  # Unnecessary on an ESP32-S3; uses more internal memory
     advanced:
       sram1_as_iram: true
+      flash_chip: generic
 
 logger:
   level: warn
 
 api:
   on_client_connected:
-    - script.execute: stop_wake_word
     - delay: 2000ms
     - lambda: |-
         if (!id(boot_sound_played)) {
           id(boot_sound_played) = true;
           if (id(startup_sound_switch).state) {
-            id(play_sound)->execute(true, std::string("ready_sound"));
+            id(play_sound)->execute(true, std::string("timer_finished_sound"));
           }
         }
 
@@ -52,7 +64,7 @@ improv_serial:
 psram:
   mode: quad
   speed: 80MHz
-  
+
 captive_portal:
 
 i2c:
@@ -61,52 +73,61 @@ i2c:
   frequency: 100kHz
   id: bus_a
 
-# USING EXTERNAL COMPONENT
+# USING EXTERNAL COMPONENT (still works best)
 external_components:
   - source: github://pr#3552
     components: [es8388]
     refresh: 0s
 es8388:
 
-# USING INTERNAL COMPONENT
+# USING INTERNAL COMPONENT (leave it commented out)
 #audio_dac:
 #  - platform: es8388
 #    id: es8388_dac
 
 output:
   - platform: gpio
-    pin:
-      number: GPIO21
-      inverted: true
-    id: mute_pin
+    pin: GPIO21  # Amp enable, high = on; starts low (off) at boot
+    id: amp_enable
 
 audio:
   codecs:
     flac:
       buffer_memory: internal  # Unnecessary on an ESP32-S3; uses more internal memory
-    opus:
-      state_memory: internal  # Unnecessary on an ESP32-S3; uses more internal memory
-      pseudostack:
-        threadsafe: false  # Unnecessary on an ESP32-S3; prevents decoding two Opus streams simultaneously
+    # No opus block: it forces the Opus decoder in, and the VA build does not fit 4MB flash with it
 
 sendspin:
   id: sendspin_hub
   task_stack_in_psram: false
+  on_pairing_failed:
+    - logger.log:
+        format: "Sendspin pairing failed: %s"
+        args: ["reason.c_str()"]
+        level: WARN
 
 i2s_audio:
   - id: i2s_audio_bus
     i2s_lrclk_pin: GPIO25
-    i2s_bclk_pin:  GPIO5
+    i2s_bclk_pin:
+      number: GPIO5
+      ignore_strapping_warning: true
+    full_duplex: true
 
 microphone:
   - platform: i2s_audio
     id: box_mic
     i2s_audio_id: i2s_audio_bus
-    sample_rate: 16000
+    sample_rate: 48000
     i2s_din_pin: GPIO35
     bits_per_sample: 16bit
     channel: stereo
-    adc_type: external  
+    adc_type: external
+  - platform: resampler
+    id: voice_mic
+    microphone:
+      microphone: box_mic
+      channels: [0]
+    sample_rate: 16000
 
 speaker:
   - platform: i2s_audio
@@ -114,9 +135,10 @@ speaker:
     i2s_audio_id: i2s_audio_bus
     i2s_dout_pin: GPIO26
     dac_type: external
+    sample_rate: 48000
     channel: stereo
     buffer_duration: 300ms
-#    audio_dac: es8388_dac # <<< adding this line breaks volume control in MA.
+    timeout: never
 
   - platform: mixer
     id: mixing_speaker
@@ -141,9 +163,7 @@ speaker:
 
 audio_file:
   - id: timer_finished_sound
-    file: https://github.com/esphome/home-assistant-voice-pe/raw/dev/sounds/timer_finished.flac
-  - id: ready_sound
-    file: https://github.com/RealDeco/xiaozhi-esphome/raw/main/sounds/${startup_sound_file}.flac
+    file: https://github.com/RealDeco/xiaozhi-esphome/raw/main/sounds/timer_finished_small.flac
 
 media_source:
   - platform: audio_file
@@ -155,6 +175,8 @@ media_source:
   - platform: sendspin
     id: sendspin_media_source
     decode_memory: internal
+    static_delay_adjustable: true
+    codecs: [flac, pcm]  # Opus left out to save flash
 
 media_player:
   - platform: sendspin
@@ -183,42 +205,35 @@ media_player:
         - http_media_source
         - sendspin_media_source
     volume_increment: 0.05
-    volume_min: 0.4
+    volume_min: 0.1
     volume_max: 0.9
 
     on_announcement:
       - script.stop: mp_idle_debounce
-      - if:
-          condition:
-            - microphone.is_capturing:
-          then:
-            - script.execute: stop_wake_word
-            - wait_until:
-                condition:
-                  not:
-                    microphone.is_capturing:
 
     on_play:
       - script.stop: mp_idle_debounce
-      - if:
-          condition:
-            - microphone.is_capturing:
-          then:
-            - script.execute: stop_wake_word
-            - wait_until:
-                condition:
-                  not:
-                    microphone.is_capturing:
+      - script.execute: stop_wake_word  # No echo cancellation, so no wake word during music
       - script.execute: reset_led
+
+    on_pause:
+      - script.execute: reset_led
+      - script.execute: start_wake_word
 
     on_idle:
       - script.execute: mp_idle_debounce
 
 micro_wake_word:
   id: mww
+  microphone: voice_mic
+  stop_after_detection: false  # Keep listening during replies so "stop" can be heard
   models:
     - okay_nabu
     - hey_jarvis
+    # Only enabled while a TTS reply plays or a timer rings
+    - model: https://github.com/kahrendt/microWakeWord/releases/download/stop/stop.json
+      id: stop
+      internal: true
 #    - alexa
 #    - hey_mycroft
 #    - model: https://raw.githubusercontent.com/RealDeco/xiaozhi-esphome/refs/heads/main/MicroWakeWords/models/v2/hey_sarah.json
@@ -232,12 +247,33 @@ micro_wake_word:
 #    - model: https://raw.githubusercontent.com/esphome/micro-wake-word-models/refs/heads/main/models/v2/experiments/okay_computer.json
 
   on_wake_word_detected:
-    - voice_assistant.start:
-        wake_word: !lambda return wake_word;
+    - if:
+        condition:
+          switch.is_on: timer_ringing
+        then:
+          - switch.turn_off: timer_ringing
+        else:
+          - if:
+              condition:
+                voice_assistant.is_running:
+              then:
+                - voice_assistant.stop:
+              else:
+                - if:
+                    condition:
+                      media_player.is_announcing:
+                        id: external_media_player
+                    then:
+                      - media_player.stop:
+                          announcement: true
+                          id: external_media_player
+                    else:
+                      - voice_assistant.start:
+                          wake_word: !lambda return wake_word;
 
 voice_assistant:
   id: va
-  microphone: box_mic
+  microphone: voice_mic
   media_player: external_media_player
   micro_wake_word: mww
   noise_suppression_level: 2
@@ -266,6 +302,7 @@ voice_assistant:
               green: 0%
               effect: "Fast Pulse"
   on_tts_start:
+    - script.execute: activate_stop_word_once
     - if:
         condition:
           - switch.is_on: use_listen_light
@@ -285,13 +322,9 @@ voice_assistant:
             id: external_media_player
         timeout: 0.5s
     - wait_until:
-        - and:
-            - not:
-                media_player.is_announcing:
-                  id: external_media_player
-            - not:
-                speaker.is_playing:
-                  id: box_speaker
+        not:
+          media_player.is_announcing:
+            id: external_media_player
     - if:
         condition:
           lambda: return id(wake_word_engine_location).current_option() == "On device";
@@ -470,6 +503,29 @@ script:
             lambda: return id(wake_word_engine_location).current_option() == "On device";
           then:
             - micro_wake_word.stop:
+  - id: activate_stop_word_once
+    mode: restart
+    then:
+      - wait_until:
+          condition:
+            media_player.is_announcing:
+              id: external_media_player
+          timeout: 5s
+      - delay: 1s  # Skip the start of the reply
+      - if:
+          condition:
+            switch.is_off: timer_ringing
+          then:
+            - micro_wake_word.enable_model: stop
+      - wait_until:
+          not:
+            media_player.is_announcing:
+              id: external_media_player
+      - if:
+          condition:
+            switch.is_off: timer_ringing
+          then:
+            - micro_wake_word.disable_model: stop
   - id: ring_timer
     then:
       - script.execute: enable_repeat_one
@@ -515,6 +571,15 @@ script:
               .set_announcement(true)
               .perform();
           }
+  - id: apply_amp
+    then:
+      - if:
+          condition:
+            lambda: return id(amp_ready) && !id(mute_speaker).state;
+          then:
+            - output.turn_on: amp_enable
+          else:
+            - output.turn_off: amp_enable
   - id: led_red
     then:
       - light.turn_on:
@@ -550,12 +615,12 @@ switch:
     restore_mode: RESTORE_DEFAULT_OFF
     entity_category: config
     on_turn_off:
-      - microphone.unmute:
+      - microphone.unmute: box_mic
       - script.execute: start_wake_word
       - script.execute: reset_led
     on_turn_on:
       - script.execute: stop_wake_word
-      - microphone.mute:
+      - microphone.mute: box_mic
       - script.execute: reset_led
   - platform: template
     name: Mute speaker
@@ -565,15 +630,16 @@ switch:
     restore_mode: RESTORE_DEFAULT_OFF
     entity_category: config
     on_turn_off:
-      - output.turn_off: mute_pin
+      - script.execute: apply_amp
     on_turn_on:
-      - output.turn_on: mute_pin
+      - script.execute: apply_amp
   - platform: template
     id: timer_ringing
     optimistic: true
     internal: true
     restore_mode: ALWAYS_OFF
     on_turn_off:
+      - micro_wake_word.disable_model: stop
       - script.execute: disable_repeat
       - if:
           condition:
@@ -592,9 +658,51 @@ switch:
       - delay: 100ms
       - script.execute: reset_led
     on_turn_on:
+      - micro_wake_word.enable_model: stop
       - script.execute: ring_timer
       - delay: 15min
       - switch.turn_off: timer_ringing
+  - platform: sendspin
+    id: sendspin_unpaired_access
+    type: unpaired_access
+    name: "Sendspin Unpaired Access"
+    restore_mode: RESTORE_DEFAULT_ON
+
+button:
+  - platform: restart
+    id: restart_button
+    name: "Restart"
+    entity_category: config
+    icon: "mdi:restart"
+
+  - platform: template
+    id: sendspin_confirm_pairing
+    name: "Sendspin Confirm Pairing"
+    icon: mdi:link-variant
+    entity_category: config
+    on_press:
+      - sendspin.confirm_pairing_window: sendspin_hub
+
+text_sensor:
+  - platform: sendspin
+    id: sendspin_title
+    name: "Song Title"
+    type: title
+
+  - platform: sendspin
+    id: sendspin_artist
+    name: "Song Artist"
+    type: artist
+
+  - platform: sendspin
+    id: sendspin_album
+    name: "Album Name"
+    type: album
+
+  - platform: sendspin
+    id: sendspin_pairing_code
+    type: pairing_code
+    name: "Sendspin Pairing Code"
 
 select:
   - platform: template
@@ -622,12 +730,17 @@ globals:
     type: bool
     restore_value: no
     initial_value: "false"
+  - id: amp_ready
+    type: bool
+    restore_value: no
+    initial_value: "false"
 
 binary_sensor:
   - platform: gpio
     pin:
       number: GPIO12
       inverted: true
+      ignore_strapping_warning: true
       mode:
         input: true
         pullup: true
@@ -713,7 +826,7 @@ light:
     default_transition_length: 0s
     chipset: WS2812
     num_leds: 1
-    rgb_order: grb
+    channel_colors: GRB
     effects:
       - pulse:
           name: "Slow Pulse"
