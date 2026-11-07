@@ -302,6 +302,12 @@ binary_sensor:
         pullup: true
     name: Button
     on_multi_click:
+      # Hold = switch to the next active Sendspin group
+      - timing:
+          - ON for at least 1s
+        then:
+          - sendspin.switch:
+
       # Triple click = previous track
       - timing:
           - ON for at most 500ms
