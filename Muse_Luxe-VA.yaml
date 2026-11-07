@@ -18,6 +18,7 @@ esphome:
     priority: -100
     then:
       - micro_wake_word.disable_model: stop  # Enabled state is saved; never boot with it on
+      - script.execute: refresh_timer_text
       - script.execute: led_red
       # Amp stays off until the codec is set up, otherwise it plays loud noise at boot
       - delay: 500ms
@@ -374,8 +375,17 @@ voice_assistant:
   on_client_disconnected:
     - script.execute: stop_wake_word
 
+  on_timer_started:
+    - script.execute: refresh_timer_text
+  on_timer_updated:
+    - script.execute: refresh_timer_text
+  on_timer_cancelled:
+    - script.execute: refresh_timer_text
+  on_timer_tick:
+    - script.execute: refresh_timer_text
   on_timer_finished:
     - switch.turn_on: timer_ringing
+    - script.execute: refresh_timer_text
     - if:
         condition:
           - switch.is_on: use_listen_light
@@ -542,6 +552,37 @@ script:
             switch.is_off: timer_ringing
           then:
             - micro_wake_word.disable_model: stop
+  - id: refresh_timer_text
+    mode: restart
+    then:
+      - delay: 10ms  # on_timer_cancelled fires before the timer leaves the list
+      - lambda: |-
+          if (id(timer_ringing).state) {
+            id(timer_countdown).publish_state("Ringing");
+            return;
+          }
+          // Shortest running timer; fall back to a paused one
+          const voice_assistant::Timer *best = nullptr;
+          for (auto &t : id(va).get_timers()) {
+            if (best == nullptr || (t.is_active && !best->is_active) ||
+                (t.is_active == best->is_active && t.seconds_left < best->seconds_left)) {
+              best = &t;
+            }
+          }
+          if (best == nullptr) {
+            id(timer_countdown).publish_state("Idle");
+            return;
+          }
+          uint32_t s = best->seconds_left;
+          char buf[24];
+          if (s >= 3600) {
+            snprintf(buf, sizeof(buf), "%u:%02u:%02u", (unsigned) (s / 3600), (unsigned) (s / 60 % 60), (unsigned) (s % 60));
+          } else {
+            snprintf(buf, sizeof(buf), "%u:%02u", (unsigned) (s / 60), (unsigned) (s % 60));
+          }
+          std::string text = buf;
+          if (!best->is_active) text += " paused";
+          id(timer_countdown).publish_state(text);
   - id: ring_timer
     then:
       - script.execute: enable_repeat_one
@@ -657,6 +698,7 @@ switch:
     on_turn_off:
       - micro_wake_word.disable_model: stop
       - script.execute: disable_repeat
+      - script.execute: refresh_timer_text
       - if:
           condition:
             media_player.is_announcing:
@@ -700,6 +742,12 @@ button:
       - sendspin.confirm_pairing_window: sendspin_hub
 
 text_sensor:
+  - platform: template
+    id: timer_countdown
+    name: "Timer"
+    icon: "mdi:timer-outline"
+    update_interval: never
+
   - platform: sendspin
     id: sendspin_title
     name: "Song Title"
@@ -762,6 +810,12 @@ binary_sensor:
         pullup: true
     name: Button
     on_multi_click:
+      # Hold = switch to the next active Sendspin group
+      - timing:
+          - ON for at least 1s
+        then:
+          - sendspin.switch:
+
       # Triple click
       - timing:
           - ON for at most 500ms
