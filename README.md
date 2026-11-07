@@ -14,7 +14,10 @@ Basic YAML firmware with simple functionality:
 - Play button starts and stops playback.
 - Double-clicking skips to the next song.
 - Triple-clicking goes to the previous song.
+- HOLD moves to next group playing
 - LED is green while playing and red while in standby.
+
+-Includes pairing and adjustable delay.
 
 [Flash Muse Luxe Firmware](https://realdeco.github.io/muse_wrover/Muse_Luxe/)
 
@@ -30,7 +33,10 @@ Basic YAML firmware with simple functionality:
 - GPIO0 (boot) button starts and stops playback.
 - Double-clicking skips to the next song.
 - Triple-clicking goes to the previous song.
+- HOLD moves to next group playing
 - LED is green while playing and red while in standby.
+
+-Includes pairing and adjustable delay.
 
 [Flash Muse Proto Firmware](https://realdeco.github.io/muse_wrover/Muse_Proto/)
 
@@ -47,7 +53,10 @@ connected to a MAX98357 speaker amplifier like this:
 - GPIO0 (boot) button starts and stops playback.
 - Double-clicking skips to the next song.
 - Triple-clicking goes to the previous song.
+- HOLD moves to next group playing
 - LED is blinking blue while playing and OFF while in standby.
+
+-Includes pairing and adjustable delay.
 
 [Flash WRover Dev Module Firmware](https://realdeco.github.io/muse_wrover/WRover/)
 
