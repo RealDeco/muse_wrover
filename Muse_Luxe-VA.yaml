@@ -210,6 +210,10 @@ media_player:
 
     on_announcement:
       - script.stop: mp_idle_debounce
+      - mixer_speaker.apply_ducking:  # Lower music under announcements
+          id: media_mixing_input
+          decibel_reduction: 20
+          duration: 0.0s
 
     on_play:
       - script.stop: mp_idle_debounce
@@ -222,6 +226,18 @@ media_player:
 
     on_idle:
       - script.execute: mp_idle_debounce
+
+    on_state:
+      - if:
+          condition:
+            not:
+              media_player.is_announcing:
+                id: external_media_player
+          then:
+            - mixer_speaker.apply_ducking:  # Bring music back after announcements
+                id: media_mixing_input
+                decibel_reduction: 0
+                duration: 1.0s
 
 micro_wake_word:
   id: mww
