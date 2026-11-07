@@ -20,7 +20,7 @@ Basic YAML firmware with simple functionality:
 
 ## Muse Luxe VA
 
--Includes Voice Assistant
+-Includes Voice Assistant, duplex audio, stop word, pairing and adjustable delay
 
 [Flash Muse Luxe VA Firmware](https://realdeco.github.io/muse_wrover/Muse_Luxe-VA/)
 
