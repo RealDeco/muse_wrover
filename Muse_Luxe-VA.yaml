@@ -1,5 +1,10 @@
-substitutions:
-  startup_sound_file: Home_Connected
+packages:
+  extcomp:
+    url: https://github.com/RealDeco/xiaozhi-esphome.git
+    ref: main
+    refresh: 0s
+    files:
+      - devices/Under_Development/Modular/HW/sendspin-external_components_2026.10.0.yaml
 
 esphome:
   name: muse-luxe
@@ -12,10 +17,14 @@ esphome:
   on_boot:
     priority: -100
     then:
+      - micro_wake_word.disable_model: stop  # Enabled state is saved; never boot with it on
       - script.execute: led_red
       # Amp stays off until the codec is set up, otherwise it plays loud noise at boot
       - delay: 500ms
-      - output.turn_on: amp_enable
+      - globals.set:
+          id: amp_ready
+          value: "true"
+      - script.execute: apply_amp
 
 esp32:
   variant: esp32
@@ -35,11 +44,12 @@ logger:
 
 api:
   on_client_connected:
+    - delay: 2000ms
     - lambda: |-
         if (!id(boot_sound_played)) {
           id(boot_sound_played) = true;
           if (id(startup_sound_switch).state) {
-            id(play_sound)->execute(true, std::string("ready_sound"));
+            id(play_sound)->execute(true, std::string("timer_finished_sound"));
           }
         }
 
@@ -70,7 +80,7 @@ external_components:
     refresh: 0s
 es8388:
 
-# USING INTERNAL COMPONENT
+# USING INTERNAL COMPONENT (leave it commented out)
 #audio_dac:
 #  - platform: es8388
 #    id: es8388_dac
@@ -84,10 +94,7 @@ audio:
   codecs:
     flac:
       buffer_memory: internal  # Unnecessary on an ESP32-S3; uses more internal memory
-    opus:
-      state_memory: internal  # Unnecessary on an ESP32-S3; uses more internal memory
-      pseudostack:
-        threadsafe: false  # Unnecessary on an ESP32-S3; prevents decoding two Opus streams simultaneously
+    # No opus block: it forces the Opus decoder in, and the VA build does not fit 4MB flash with it
 
 sendspin:
   id: sendspin_hub
@@ -104,6 +111,23 @@ i2s_audio:
     i2s_bclk_pin:
       number: GPIO5
       ignore_strapping_warning: true
+    full_duplex: true
+
+microphone:
+  - platform: i2s_audio
+    id: box_mic
+    i2s_audio_id: i2s_audio_bus
+    sample_rate: 48000
+    i2s_din_pin: GPIO35
+    bits_per_sample: 16bit
+    channel: stereo
+    adc_type: external
+  - platform: resampler
+    id: voice_mic
+    microphone:
+      microphone: box_mic
+      channels: [0]
+    sample_rate: 16000
 
 speaker:
   - platform: i2s_audio
@@ -111,8 +135,10 @@ speaker:
     i2s_audio_id: i2s_audio_bus
     i2s_dout_pin: GPIO26
     dac_type: external
+    sample_rate: 48000
     channel: stereo
     buffer_duration: 300ms
+    timeout: never
 
   - platform: mixer
     id: mixing_speaker
@@ -136,8 +162,8 @@ speaker:
     bits_per_sample: 16
 
 audio_file:
-  - id: ready_sound
-    file: https://github.com/RealDeco/xiaozhi-esphome/raw/main/sounds/${startup_sound_file}.flac
+  - id: timer_finished_sound
+    file: https://github.com/RealDeco/xiaozhi-esphome/raw/main/sounds/timer_finished_48k.flac
 
 media_source:
   - platform: audio_file
@@ -150,6 +176,7 @@ media_source:
     id: sendspin_media_source
     decode_memory: internal
     static_delay_adjustable: true
+    codecs: [flac, pcm]  # Opus left out to save flash
 
 media_player:
   - platform: sendspin
@@ -181,20 +208,349 @@ media_player:
     volume_min: 0.1
     volume_max: 0.9
 
-    on_state:
-      then:
-        - lambda: |-
-            using media_player::MediaPlayerState;
-            auto state = id(external_media_player).state;
-            if (
-              state == MediaPlayerState::MEDIA_PLAYER_STATE_PLAYING ||
-              state == MediaPlayerState::MEDIA_PLAYER_STATE_ANNOUNCING
-            ) {
-              id(led_green).execute();
-            } else {
-              id(led_red).execute();
-            }
+    on_announcement:
+      - script.stop: mp_idle_debounce
+
+    on_play:
+      - script.stop: mp_idle_debounce
+      - script.execute: stop_wake_word  # No echo cancellation, so no wake word during music
+      - script.execute: reset_led
+
+    on_pause:
+      - script.execute: reset_led
+      - script.execute: start_wake_word
+
+    on_idle:
+      - script.execute: mp_idle_debounce
+
+micro_wake_word:
+  id: mww
+  microphone: voice_mic
+  stop_after_detection: false  # Keep listening during replies so "stop" can be heard
+  models:
+    - okay_nabu
+    - hey_jarvis
+    # Only enabled while a TTS reply plays or a timer rings
+    - model: https://github.com/kahrendt/microWakeWord/releases/download/stop/stop.json
+      id: stop
+      internal: true
+#    - alexa
+#    - hey_mycroft
+#    - model: https://raw.githubusercontent.com/RealDeco/xiaozhi-esphome/refs/heads/main/MicroWakeWords/models/v2/hey_sarah.json
+#    - model: https://raw.githubusercontent.com/JohnnyPrimus/Custom_V2_MicroWakeWords/refs/heads/main/models/computer/computer.json
+#    - model: https://raw.githubusercontent.com/JohnnyPrimus/Custom_V2_MicroWakeWords/refs/heads/main/models/hey_friday/hey_friday.json
+#    - model: https://github.com/kahrendt/microWakeWord/releases/download/okay_nabu_20241226.3/okay_nabu.json
+#    - model: https://raw.githubusercontent.com/formatBCE/Respeaker-Lite-ESPHome-integration/refs/heads/main/microwakeword/models/v2/kenobi.json
+#    - model: https://raw.githubusercontent.com/esphome/micro-wake-word-models/refs/heads/main/models/v2/experiments/choo_choo_homie.json
+#    - model: https://raw.githubusercontent.com/esphome/micro-wake-word-models/refs/heads/main/models/v2/experiments/hey_home_assistant.json
+#    - model: https://raw.githubusercontent.com/esphome/micro-wake-word-models/refs/heads/main/models/v2/experiments/hey_peppa_pig.json
+#    - model: https://raw.githubusercontent.com/esphome/micro-wake-word-models/refs/heads/main/models/v2/experiments/okay_computer.json
+
+  on_wake_word_detected:
+    - if:
+        condition:
+          switch.is_on: timer_ringing
+        then:
+          - switch.turn_off: timer_ringing
+        else:
+          - if:
+              condition:
+                voice_assistant.is_running:
+              then:
+                - voice_assistant.stop:
+              else:
+                - if:
+                    condition:
+                      media_player.is_announcing:
+                        id: external_media_player
+                    then:
+                      - media_player.stop:
+                          announcement: true
+                          id: external_media_player
+                    else:
+                      - voice_assistant.start:
+                          wake_word: !lambda return wake_word;
+
+voice_assistant:
+  id: va
+  microphone: voice_mic
+  media_player: external_media_player
+  micro_wake_word: mww
+  noise_suppression_level: 2
+  auto_gain: 31dBFS
+  volume_multiplier: 2.0
+  on_listening:
+    - if:
+        condition:
+          - switch.is_on: use_listen_light
+        then:
+          - light.turn_on:
+              id: led
+              blue: 100%
+              red: 0%
+              green: 0%
+              effect: "Slow Pulse"
+  on_stt_vad_end:
+    - if:
+        condition:
+          - switch.is_on: use_listen_light
+        then:
+          - light.turn_on:
+              id: led
+              blue: 100%
+              red: 0%
+              green: 0%
+              effect: "Fast Pulse"
+  on_tts_start:
+    - script.execute: activate_stop_word_once
+    - if:
+        condition:
+          - switch.is_on: use_listen_light
+        then:
+          - light.turn_on:
+              id: led
+              blue: 100%
+              red: 0%
+              green: 0%
+              brightness: 100%
+              effect: none
+
+  on_end:
+    - wait_until:
+        condition:
+          media_player.is_announcing:
+            id: external_media_player
+        timeout: 0.5s
+    - wait_until:
+        not:
+          media_player.is_announcing:
+            id: external_media_player
+    - if:
+        condition:
+          lambda: return id(wake_word_engine_location).current_option() == "On device";
+        then:
+          - lambda: id(va).set_use_wake_word(false);
+          - script.execute: start_wake_word
+
+  on_error:
+    - if:
+        condition:
+          switch.is_off: mute
+        then:
+          - script.execute: start_wake_word
+    - if:
+        condition:
+          - switch.is_on: use_listen_light
+        then:
+          - light.turn_on:
+              id: led
+              red: 100%
+              green: 0%
+              blue: 0%
+              brightness: 100%
+              effect: none
+    - delay: 2s
+    - script.execute: reset_led
+
+  on_client_connected:
+    - script.execute: start_wake_word
+
+  on_client_disconnected:
+    - script.execute: stop_wake_word
+
+  on_timer_finished:
+    - switch.turn_on: timer_ringing
+    - if:
+        condition:
+          - switch.is_on: use_listen_light
+        then:
+          - light.turn_on:
+              id: led
+              red: 0%
+              green: 100%
+              blue: 0%
+              brightness: 100%
+              effect: "Fast Pulse"
+    - wait_until:
+        media_player.is_announcing:
+          id: external_media_player
+    - if:
+        condition:
+          - switch.is_on: use_listen_light
+        then:
+          - light.turn_on:
+              id: led
+              blue: 0%
+              red: 100%
+              green: 0%
+              effect: "Fast Pulse"
+
 script:
+  - id: mp_idle_debounce
+    mode: restart
+    then:
+      - delay: 1s
+      - if:
+          condition:
+            and:
+              - media_player.is_idle: external_media_player
+              - not:
+                  voice_assistant.is_running:
+          then:
+            - script.execute: reset_led
+            - script.execute: start_wake_word
+  - id: reset_led
+    then:
+      - if:
+          condition:
+            - switch.is_on: use_listen_light
+          then:
+            - if:
+                condition:
+                  - switch.is_on: timer_ringing
+                then:
+                  - light.turn_on:
+                      id: led
+                      red: 100%
+                      green: 0%
+                      blue: 0%
+                      brightness: 100%
+                      effect: "Fast Pulse"
+                else:
+                  - if:
+                      condition:
+                        - media_player.is_playing: external_media_player
+                      then:
+                        - light.turn_on:
+                            id: led
+                            red: 0%
+                            green: 100%
+                            blue: 0%
+                            effect: "Slow Pulse"
+                      else:
+                        - if:
+                            condition:
+                              - not:
+                                  voice_assistant.is_running:
+                            then:
+                              - if:
+                                  condition:
+                                    - switch.is_on: mute
+                                  then:
+                                    - light.turn_on:
+                                        id: led
+                                        red: 100%
+                                        green: 0%
+                                        blue: 0%
+                                        brightness: 100%
+                                        effect: none
+                                  else:
+                                    - if:
+                                        condition:
+                                          - lambda: return id(wake_word_engine_location).current_option() == "On device";
+                                        then:
+                                          - light.turn_on:
+                                              id: led
+                                              red: 100%
+                                              green: 89%
+                                              blue: 71%
+                                              brightness: 30%
+                                              effect: none
+                                        else:
+                                          - light.turn_on:
+                                              id: led
+                                              red: 0%
+                                              green: 100%
+                                              blue: 100%
+                                              brightness: 30%
+                                              effect: none
+          else:
+            - light.turn_off: led
+  - id: start_wake_word
+    then:
+      - if:
+          condition:
+            and:
+              - switch.is_off: mute
+              - not:
+                  - voice_assistant.is_running:
+              - not:
+                  - micro_wake_word.is_running:
+              - lambda: return id(wake_word_engine_location).current_option() == "On device";
+          then:
+            - lambda: id(va).set_use_wake_word(false);
+            - micro_wake_word.start:
+      - if:
+          condition:
+            and:
+              - switch.is_off: mute
+              - not:
+                  - voice_assistant.is_running:
+              - lambda: return id(wake_word_engine_location).current_option() == "In Home Assistant";
+          then:
+            - lambda: id(va).set_use_wake_word(true);
+            - voice_assistant.start_continuous:
+  - id: stop_wake_word
+    then:
+      - if:
+          condition:
+            lambda: return id(wake_word_engine_location).current_option() == "In Home Assistant";
+          then:
+            - lambda: id(va).set_use_wake_word(false);
+            - voice_assistant.stop:
+      - if:
+          condition:
+            lambda: return id(wake_word_engine_location).current_option() == "On device";
+          then:
+            - micro_wake_word.stop:
+  - id: activate_stop_word_once
+    mode: restart
+    then:
+      - wait_until:
+          condition:
+            media_player.is_announcing:
+              id: external_media_player
+          timeout: 5s
+      - delay: 1s  # Skip the start of the reply
+      - if:
+          condition:
+            switch.is_off: timer_ringing
+          then:
+            - micro_wake_word.enable_model: stop
+      - wait_until:
+          not:
+            media_player.is_announcing:
+              id: external_media_player
+      - if:
+          condition:
+            switch.is_off: timer_ringing
+          then:
+            - micro_wake_word.disable_model: stop
+  - id: ring_timer
+    then:
+      - script.execute: enable_repeat_one
+      - script.execute:
+          id: play_sound
+          priority: true
+          sound_file: "timer_finished_sound"
+  - id: enable_repeat_one
+    then:
+      - media_player.repeat_one:
+          id: external_media_player
+          announcement: true
+      - speaker_source.set_playlist_delay:
+          id: external_media_player
+          pipeline: announcement
+          delay: 500ms
+  - id: disable_repeat
+    then:
+      - media_player.repeat_off:
+          id: external_media_player
+          announcement: true
+      - speaker_source.set_playlist_delay:
+          id: external_media_player
+          pipeline: announcement
+          delay: 0ms
   - id: play_sound
     parameters:
       priority: bool
@@ -215,21 +571,21 @@ script:
               .set_announcement(true)
               .perform();
           }
+  - id: apply_amp
+    then:
+      - if:
+          condition:
+            lambda: return id(amp_ready) && !id(mute_speaker).state;
+          then:
+            - output.turn_on: amp_enable
+          else:
+            - output.turn_off: amp_enable
   - id: led_red
     then:
       - light.turn_on:
           id: led
           red: 100%
           green: 0%
-          blue: 0%
-          brightness: 100%
-
-  - id: led_green
-    then:
-      - light.turn_on:
-          id: led
-          red: 0%
-          green: 100%
           blue: 0%
           brightness: 100%
 
@@ -241,7 +597,71 @@ switch:
     entity_category: config
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
-
+  - platform: template
+    name: Use listen light
+    id: use_listen_light
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    entity_category: config
+    on_turn_on:
+      - script.execute: reset_led
+    on_turn_off:
+      - script.execute: reset_led
+  - platform: template
+    name: Mute microphone
+    id: mute
+    icon: "mdi:microphone-off"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    entity_category: config
+    on_turn_off:
+      - microphone.unmute: box_mic
+      - script.execute: start_wake_word
+      - script.execute: reset_led
+    on_turn_on:
+      - script.execute: stop_wake_word
+      - microphone.mute: box_mic
+      - script.execute: reset_led
+  - platform: template
+    name: Mute speaker
+    id: mute_speaker
+    icon: "mdi:volume-off"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    entity_category: config
+    on_turn_off:
+      - script.execute: apply_amp
+    on_turn_on:
+      - script.execute: apply_amp
+  - platform: template
+    id: timer_ringing
+    optimistic: true
+    internal: true
+    restore_mode: ALWAYS_OFF
+    on_turn_off:
+      - micro_wake_word.disable_model: stop
+      - script.execute: disable_repeat
+      - if:
+          condition:
+            media_player.is_announcing:
+              id: external_media_player
+          then:
+            media_player.stop:
+              announcement: true
+              id: external_media_player
+      - wait_until:
+          condition:
+            not:
+              media_player.is_announcing:
+                id: external_media_player
+          timeout: 1s
+      - delay: 100ms
+      - script.execute: reset_led
+    on_turn_on:
+      - micro_wake_word.enable_model: stop
+      - script.execute: ring_timer
+      - delay: 15min
+      - switch.turn_off: timer_ringing
   - platform: sendspin
     id: sendspin_unpaired_access
     type: unpaired_access
@@ -284,8 +704,33 @@ text_sensor:
     type: pairing_code
     name: "Sendspin Pairing Code"
 
+select:
+  - platform: template
+    entity_category: config
+    name: Wake word engine location
+    id: wake_word_engine_location
+    icon: "mdi:account-voice"
+    optimistic: true
+    restore_value: true
+    options:
+      - In Home Assistant
+      - On device
+    initial_option: On device
+    on_value:
+      - script.execute: stop_wake_word
+      - delay: 500ms
+      - if:
+          condition:
+            switch.is_off: mute
+          then:
+            - script.execute: start_wake_word
+
 globals:
   - id: boot_sound_played
+    type: bool
+    restore_value: no
+    initial_value: "false"
+  - id: amp_ready
     type: bool
     restore_value: no
     initial_value: "false"
@@ -301,7 +746,7 @@ binary_sensor:
         pullup: true
     name: Button
     on_multi_click:
-      # Triple click = previous track
+      # Triple click
       - timing:
           - ON for at most 500ms
           - OFF for at most 400ms
@@ -312,7 +757,7 @@ binary_sensor:
         then:
           - media_player.previous: sendspin_group_media_player
 
-      # Double click = next track
+      # Double click
       - timing:
           - ON for at most 500ms
           - OFF for at most 400ms
@@ -321,12 +766,31 @@ binary_sensor:
         then:
           - media_player.next: sendspin_group_media_player
 
-      # Single click = play/pause
+      # Single click
       - timing:
           - ON for at most 500ms
           - OFF for at least 500ms
         then:
-          - media_player.toggle: sendspin_group_media_player
+          - if:
+              condition:
+                switch.is_on: timer_ringing
+              then:
+                - switch.turn_off: timer_ringing
+              else:
+                - if:
+                    condition:
+                      voice_assistant.is_running:
+                    then:
+                      - voice_assistant.stop:
+                      - wait_until:
+                          condition:
+                            not:
+                              voice_assistant.is_running:
+                          timeout: 2s
+                      - script.execute: reset_led
+                      - script.execute: start_wake_word
+                    else:
+                      - media_player.toggle: sendspin_group_media_player
 
   - platform: gpio
     pin:
@@ -388,17 +852,11 @@ sensor:
     accuracy_decimals: 2
     update_interval: 10s
     filters:
-      # Smooth noise first
       - sliding_window_moving_average:
           window_size: 10
           send_every: 1
-
-      # Scale for divider (start with 1.90; adjust after you see results)
       - multiply: 1.90
-
-      # Don’t spam HA
       - throttle: 1min
-
     on_value:
       then:
         - sensor.template.publish:
