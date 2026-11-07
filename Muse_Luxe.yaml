@@ -13,7 +13,10 @@ esphome:
     priority: -100
     then:
       - script.execute: led_red
-        
+      # Amp stays off until the codec is set up, otherwise it plays loud noise at boot
+      - delay: 500ms
+      - output.turn_on: amp_enable
+
 esp32:
   variant: esp32
   framework:
@@ -51,7 +54,7 @@ improv_serial:
 psram:
   mode: quad
   speed: 80MHz
-  
+
 captive_portal:
 
 i2c:
@@ -74,11 +77,9 @@ es8388:
 
 output:
   - platform: gpio
-    pin:
-      number: GPIO21
-      inverted: true
-    id: mute_pin
-    
+    pin: GPIO21  # Amp enable, high = on; starts low (off) at boot
+    id: amp_enable
+
 audio:
   codecs:
     flac:
@@ -149,7 +150,7 @@ media_source:
     id: sendspin_media_source
     decode_memory: internal
     static_delay_adjustable: true
-    
+
 media_player:
   - platform: sendspin
     id: sendspin_group_media_player
@@ -180,6 +181,12 @@ media_player:
     volume_min: 0.1
     volume_max: 0.9
 
+    on_announcement:
+      - mixer_speaker.apply_ducking:  # Lower music under announcements
+          id: media_mixing_input
+          decibel_reduction: 20
+          duration: 0.0s
+
     on_state:
       then:
         - lambda: |-
@@ -193,6 +200,17 @@ media_player:
             } else {
               id(led_red).execute();
             }
+        - if:
+            condition:
+              not:
+                media_player.is_announcing:
+                  id: external_media_player
+            then:
+              - mixer_speaker.apply_ducking:  # Bring music back after announcements
+                  id: media_mixing_input
+                  decibel_reduction: 0
+                  duration: 1.0s
+
 script:
   - id: play_sound
     parameters:
@@ -282,7 +300,7 @@ text_sensor:
     id: sendspin_pairing_code
     type: pairing_code
     name: "Sendspin Pairing Code"
-        
+
 globals:
   - id: boot_sound_played
     type: bool
