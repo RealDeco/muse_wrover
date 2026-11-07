@@ -5,7 +5,7 @@ esphome:
   name: muse-luxe
   friendly_name: Muse Luxe
   min_version: 2026.10.0
-  name_add_mac_suffix: false
+  name_add_mac_suffix: true
   project:
     name: realdeco.muse_wrover
     version: "2026.10.0"
