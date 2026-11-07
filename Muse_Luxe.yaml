@@ -4,16 +4,16 @@ substitutions:
 esphome:
   name: muse-luxe
   friendly_name: Muse Luxe
-  min_version: 2026.6.0
-  name_add_mac_suffix: true
+  min_version: 2026.10.0
+  name_add_mac_suffix: false
   project:
     name: realdeco.muse_wrover
-    version: "2026.6.0"
+    version: "2026.10.0"
   on_boot:
     priority: -100
     then:
       - script.execute: led_red
-
+        
 esp32:
   variant: esp32
   framework:
@@ -25,6 +25,7 @@ esp32:
       CONFIG_LWIP_IRAM_OPTIMIZATION: "y"  # Unnecessary on an ESP32-S3; uses more internal memory
     advanced:
       sram1_as_iram: true
+      flash_chip: generic
 
 logger:
   level: warn
@@ -59,7 +60,7 @@ i2c:
   frequency: 100kHz
   id: bus_a
 
-# USING EXTERNAL COMPONENT
+# USING EXTERNAL COMPONENT (still works best)
 external_components:
   - source: github://pr#3552
     components: [es8388]
@@ -77,7 +78,7 @@ output:
       number: GPIO21
       inverted: true
     id: mute_pin
-
+    
 audio:
   codecs:
     flac:
@@ -90,11 +91,18 @@ audio:
 sendspin:
   id: sendspin_hub
   task_stack_in_psram: false
+  on_pairing_failed:
+    - logger.log:
+        format: "Sendspin pairing failed: %s"
+        args: ["reason.c_str()"]
+        level: WARN
 
 i2s_audio:
   - id: i2s_audio_bus
     i2s_lrclk_pin: GPIO25
-    i2s_bclk_pin:  GPIO5
+    i2s_bclk_pin:
+      number: GPIO5
+      ignore_strapping_warning: true
 
 speaker:
   - platform: i2s_audio
@@ -104,7 +112,6 @@ speaker:
     dac_type: external
     channel: stereo
     buffer_duration: 300ms
-#    audio_dac: es8388_dac # <<< adding this line breaks volume control in MA.
 
   - platform: mixer
     id: mixing_speaker
@@ -141,7 +148,8 @@ media_source:
   - platform: sendspin
     id: sendspin_media_source
     decode_memory: internal
-
+    static_delay_adjustable: true
+    
 media_player:
   - platform: sendspin
     id: sendspin_group_media_player
@@ -169,7 +177,7 @@ media_player:
         - http_media_source
         - sendspin_media_source
     volume_increment: 0.05
-    volume_min: 0.4
+    volume_min: 0.1
     volume_max: 0.9
 
     on_state:
@@ -233,6 +241,48 @@ switch:
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
 
+  - platform: sendspin
+    id: sendspin_unpaired_access
+    type: unpaired_access
+    name: "Sendspin Unpaired Access"
+    restore_mode: RESTORE_DEFAULT_ON
+
+button:
+  - platform: restart
+    id: restart_button
+    name: "Restart"
+    entity_category: config
+    icon: "mdi:restart"
+
+  - platform: template
+    id: sendspin_confirm_pairing
+    name: "Sendspin Confirm Pairing"
+    icon: mdi:link-variant
+    entity_category: config
+    on_press:
+      - sendspin.confirm_pairing_window: sendspin_hub
+
+text_sensor:
+  - platform: sendspin
+    id: sendspin_title
+    name: "Song Title"
+    type: title
+
+  - platform: sendspin
+    id: sendspin_artist
+    name: "Song Artist"
+    type: artist
+
+  - platform: sendspin
+    id: sendspin_album
+    name: "Album Name"
+    type: album
+
+  - platform: sendspin
+    id: sendspin_pairing_code
+    type: pairing_code
+    name: "Sendspin Pairing Code"
+        
 globals:
   - id: boot_sound_played
     type: bool
@@ -244,6 +294,7 @@ binary_sensor:
     pin:
       number: GPIO12
       inverted: true
+      ignore_strapping_warning: true
       mode:
         input: true
         pullup: true
@@ -310,7 +361,7 @@ light:
     default_transition_length: 0s
     chipset: WS2812
     num_leds: 1
-    rgb_order: grb
+    channel_colors: GRB
     effects:
       - pulse:
           name: "Slow Pulse"
